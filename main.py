@@ -1,13 +1,81 @@
+import json
 import logging
 import os
 from datetime import date, datetime, timedelta
-from typing import Tuple
+from typing import Any, Dict, MutableMapping, Optional, Tuple
+from urllib import request
 
 import boto3
 
 logger = logging.getLogger()
 
 ce = boto3.client("ce", region_name="us-east-1")
+
+# AWS アカウント名を取得するためのクライアント
+org_client = boto3.client('organizations')
+
+
+# Lambdaのエントリーポイント
+def lambda_handler(event: Dict[str, Any], context: Any) -> None:
+    # 合計とサービス毎の請求額を取得する
+    total_billing = get_total_billing()
+    service_billings = get_service_billings()
+    account_billings = get_account_billings()
+
+    # 投稿用のメッセージを作成する
+    (title, detail) = create_message(total_billing, service_billings, account_billings)
+
+    try:
+        email_topic_arn = os.environ.get("EMAIL_TOPIC_ARN")
+        slack_secret_name = os.environ.get("SLACK_SECRET_NAME")
+        line_secret_name = os.environ.get("LINE_SECRET_NAME")
+
+        # メール用トピックが設定されている場合は、メール用トピックにメッセージを送信する
+        if email_topic_arn:
+            sns = boto3.client("sns")
+            sns.publish(
+                TopicArn=email_topic_arn,
+                Subject=title,
+                Message=detail,
+            )
+
+        # SlackのWebhook URLが設定されている場合は、Slackにメッセージを投稿する
+        if slack_secret_name:
+            webhook_url = get_secret(slack_secret_name, "info")
+            payload = {
+                "text": title,
+                "blocks": [
+                    {"type": "header", "text": {"type": "plain_text", "text": title}},
+                    {"type": "section", "text": {"type": "plain_text", "text": detail}},
+                ],
+            }
+            data = json.dumps(payload).encode()
+            headers = {"Content-Type": "application/json"}
+
+            send_request(webhook_url, data, headers)
+
+        # LINEのアクセストークンが設定されている場合は、LINEにメッセージを投稿する
+        if line_secret_name:
+            channel_access_token = get_secret(line_secret_name, "info")
+            webhook_url = "https://api.line.me/v2/bot/message/broadcast"
+            payload = {"messages": [{"type": "text", "text": f"{title}\n\n{detail}"}]}
+            data = json.dumps(payload).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {channel_access_token}",
+            }
+
+            send_request(webhook_url, data, headers)
+
+        # いずれの送信先も設定されていない場合はエラーを出力する
+        if not email_topic_arn and not slack_secret_name and not line_secret_name:
+            logger.error(
+                "No destination to post message. Please set environment variables."
+            )
+
+    except Exception as e:
+        logger.exception("Exception occurred: %s", e)
+        raise e
 
 
 def main():
@@ -122,22 +190,45 @@ def create_message(
     if not details:
         details.append("No charge this period at present.")
 
+    # アカウントIDと名前のマッピングを取得
+    account_name_mapping = get_account_name_mapping()
+
     # アカウント毎の請求額
     details.append("\nAccount Billing Details:")
     for item in account_billings:
         account_id = item["account_id"]
+        account_name = account_name_mapping.get(account_id, account_id)
         billing = round(float(item["billing"]), 2)
 
         if billing == 0.0:
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
-        details.append(f"・{account_id}: {billing:.2f} USD")
+        details.append(f"・{account_name} ({account_id}): {billing:.2f} USD")
+        # details.append(f"・({account_id}): {billing:.2f} USD")
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
         details.append("No account charge this period at present.")
 
     return title, "\n".join(details)
+
+
+def get_account_name_mapping() -> Dict[str, str]:
+    """AWS OrganizationsからアカウントIDと名前のマッピングを取得する"""
+    account_mapping = {}
+    try:
+        paginator = org_client.get_paginator('list_accounts')
+
+        for page in paginator.paginate():
+            print(page)
+            for account in page['Accounts']:
+                account_id = account['Id']
+                account_name = account['Name']
+                account_mapping[account_id] = account_name
+    except org_client.exceptions.AccessDeniedException:
+        logger.warning("Access denied to list accounts. Falling back to using account IDs.")
+
+    return account_mapping
 
 
 # 請求額の期間を取得する関数
@@ -159,6 +250,37 @@ def get_total_cost_date_range() -> Tuple[str, str]:
     # end_date = end_of_month.date().isoformat()
 
     return start_date, end_date
+
+
+# シークレットマネージャからシークレットを取得する関数
+def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
+    # シークレット名を取得
+    if secret_name is None:
+        raise ValueError("Secret name must not be None")
+    secrets_extension_endpoint = (
+        "http://localhost:2773/secretsmanager/get?secretId=" + secret_name
+    )
+
+    # ヘッダーにAWSセッショントークンを設定
+    aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
+    if aws_session_token is None:
+        raise ValueError("aws sessuib token must not be None")
+    headers = {"X-Aws-Parameters-Secrets-Token": aws_session_token}
+
+    # シークレットマネージャからシークレットを取得
+    secrets_extension_req = request.Request(secrets_extension_endpoint, headers=headers)
+    with request.urlopen(secrets_extension_req) as response:
+        secret_config = response.read()
+    secret_json = json.loads(secret_config)["SecretString"]
+    secret_value = json.loads(secret_json)[secret_key]
+    return secret_value
+
+
+# HTTPリクエストを送信する関数
+def send_request(url: str, data: bytes, headers: MutableMapping[str, str]) -> None:
+    req = request.Request(url, data=data, headers=headers, method="POST")
+    with request.urlopen(req) as response:
+        print(response.status)
 
 
 if __name__ == "__main__":
