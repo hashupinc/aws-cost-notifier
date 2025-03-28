@@ -91,22 +91,37 @@ def main():
 # 合計の請求額を取得する関数
 def get_total_billing() -> dict:
     (start_date, end_date) = get_total_cost_date_range()
+    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
 
     response = ce.get_cost_and_usage(
         TimePeriod={"Start": start_date, "End": end_date},
         Granularity="MONTHLY",
         Metrics=["AmortizedCost"],
     )
+
+    prev_response = ce.get_cost_and_usage(
+        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
+        Granularity="MONTHLY",
+        Metrics=["AmortizedCost"],
+    )
+
+    response_amount = float(response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
+    prev_amount = float(prev_response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
+    print("prev_amount: ", prev_amount)
+    print("response: ", prev_response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
+
     return {
         "start": response["ResultsByTime"][0]["TimePeriod"]["Start"],
         "end": response["ResultsByTime"][0]["TimePeriod"]["End"],
-        "billing": response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"],
+        "billing": response_amount,
+        "prev_billing": prev_amount,
     }
 
 
 # サービス毎の請求額を取得する関数
 def get_service_billings() -> list:
     (start_date, end_date) = get_total_cost_date_range()
+    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
 
     response = ce.get_cost_and_usage(
         TimePeriod={"Start": start_date, "End": end_date},
@@ -115,13 +130,26 @@ def get_service_billings() -> list:
         GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
     )
 
+    prev_response = ce.get_cost_and_usage(
+        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
+        Granularity="MONTHLY",
+        Metrics=["AmortizedCost"],
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+    )
+
+    prev_billing_dict = {item["Keys"][0]: float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_response["ResultsByTime"][0]["Groups"]}
+
     billings = []
 
     for item in response["ResultsByTime"][0]["Groups"]:
+        service_name = item["Keys"][0]
+        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
+        prev_billing = prev_billing_dict.get(service_name, 0.0)
         billings.append(
             {
-                "service_name": item["Keys"][0],
-                "billing": item["Metrics"]["AmortizedCost"]["Amount"],
+                "service_name": service_name,
+                "billing": billing,
+                "prev_billing": prev_billing,
             }
         )
     return billings
@@ -130,6 +158,7 @@ def get_service_billings() -> list:
 # アカウント毎の請求額を取得する関数
 def get_account_billings() -> list:
     (start_date, end_date) = get_total_cost_date_range()
+    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
 
     response = ce.get_cost_and_usage(
         TimePeriod={"Start": start_date, "End": end_date},
@@ -138,15 +167,26 @@ def get_account_billings() -> list:
         GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
     )
 
+    prev_response = ce.get_cost_and_usage(
+        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
+        Granularity="MONTHLY",
+        Metrics=["AmortizedCost"],
+        GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
+    )
+
+    prev_billing_dict = {item["Keys"][0]: float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_response["ResultsByTime"][0]["Groups"]}
+
     billings = []
 
     for item in response["ResultsByTime"][0]["Groups"]:
         account_id = item["Keys"][0]
-        billing = item["Metrics"]["AmortizedCost"]["Amount"]
+        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
+        prev_billing = prev_billing_dict.get(account_id, 0.0)
         billings.append(
             {
                 "account_id": account_id,
                 "billing": billing,
+                "prev_billing": prev_billing,
             }
         )
     return billings
@@ -162,11 +202,12 @@ def create_message(
     end_today = datetime.strptime(total_billing["end"], "%Y-%m-%d")
     end_yesterday = (end_today - timedelta(days=1)).strftime("%m/%d")
 
-    total = round(float(total_billing["billing"]), 2)
+    total = total_billing["billing"]
+    prev_total = total_billing["prev_billing"]
 
     account_id = os.environ.get("ACCOUNT_ID")
 
-    raw_title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD"
+    raw_title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD ({prev_total:+.2f} USD)"
 
     if account_id:
         title = f"{account_id} - {raw_title}"
@@ -179,12 +220,13 @@ def create_message(
     details.append("Service Billing Details:")
     for item in service_billings:
         service_name = item["service_name"]
-        billing = round(float(item["billing"]), 2)
+        billing = round(item["billing"], 2)
+        prev_billing = item["prev_billing"]
 
         if billing == 0.0:
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
-        details.append(f"・{service_name}: {billing:.2f} USD")
+        details.append(f"・{service_name}: {billing:.2f} USD ({prev_billing:+.2f} USD)")
 
     # 全サービスの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not details:
@@ -198,13 +240,13 @@ def create_message(
     for item in account_billings:
         account_id = item["account_id"]
         account_name = account_name_mapping.get(account_id, account_id)
-        billing = round(float(item["billing"]), 2)
+        billing = round(item["billing"], 2)
+        prev_billing = item["prev_billing"]
 
         if billing == 0.0:
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
-        details.append(f"・{account_name} ({account_id}): {billing:.2f} USD")
-        # details.append(f"・({account_id}): {billing:.2f} USD")
+        details.append(f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)")
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
@@ -249,6 +291,13 @@ def get_total_cost_date_range() -> Tuple[str, str]:
     # start_date = begin_of_month.date().isoformat()
     # end_date = end_of_month.date().isoformat()
 
+    return start_date, end_date
+
+
+# 前日の請求期間を取得する関数
+def get_prev_cost_date_range() -> Tuple[str, str]:
+    end_date = date.today().isoformat()
+    start_date = (date.today() - timedelta(days=1)).isoformat()
     return start_date, end_date
 
 
