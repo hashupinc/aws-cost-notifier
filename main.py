@@ -107,13 +107,28 @@ def process_billing_data(current_data, prev_data):
     current_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in current_data["ResultsByTime"][0]["Groups"])
     prev_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_data["ResultsByTime"][0]["Groups"])
 
+    # サービスごとの請求額の集計
+    aggregated_service_billings = {}
+
+    for item in current_data["ResultsByTime"][0]["Groups"]:
+        service_name = item["Keys"][0]
+        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
+        aggregated_service_billings.setdefault(service_name, {"billing": 0.0, "prev_billing": 0.0})
+        aggregated_service_billings[service_name]["billing"] += billing
+
+    for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
+        service_name = prev_item["Keys"][0]
+        prev_billing = float(prev_item["Metrics"]["AmortizedCost"]["Amount"])
+        if service_name in aggregated_service_billings:
+            aggregated_service_billings[service_name]["prev_billing"] += prev_billing
+
     service_billings = [
         {
-            "service_name": item["Keys"][0],
-            "billing": float(item["Metrics"]["AmortizedCost"]["Amount"]),
-            "prev_billing": sum(float(prev_item["Metrics"]["AmortizedCost"]["Amount"]) for prev_item in prev_data["ResultsByTime"][0]["Groups"] if prev_item["Keys"][0] == item["Keys"][0])
+            "service_name": service_name,
+            "billing": data["billing"],
+            "prev_billing": data["prev_billing"],
         }
-        for item in current_data["ResultsByTime"][0]["Groups"]
+        for service_name, data in aggregated_service_billings.items()
     ]
 
     # アカウント毎の請求額の計算
