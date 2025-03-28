@@ -17,13 +17,14 @@ org_client = boto3.client('organizations')
 
 # Lambdaのエントリーポイント
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
-    # 合計とサービス毎の請求額を取得する
-    total_billing = get_total_billing()
-    service_billings = get_service_billings()
-    account_billings = get_account_billings()
+    # 請求情報を取得する
+    current_billing_data = get_billing_data()
+    prev_billing_data = get_billing_data(single_date=True)
+
+    total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data, prev_billing_data)
 
     # 投稿用のメッセージを作成する
-    (title, detail) = create_message(total_billing, service_billings, account_billings)
+    (title, detail) = create_message(total_billing_info, service_billings, account_billings)
 
     try:
         email_topic_arn = os.environ.get("EMAIL_TOPIC_ARN")
@@ -78,118 +79,86 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         raise e
 
 
-def main():
-    total_billing = get_total_billing()
-    service_billings = get_service_billings()
-    account_billings = get_account_billings()
-
-    title, details = create_message(total_billing, service_billings, account_billings)
-    print(title)
-    print(details)
-
-
-# 合計の請求額を取得する関数
-def get_total_billing() -> dict:
-    (start_date, end_date) = get_total_cost_date_range()
-    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
+def get_billing_data(single_date=False) -> dict:
+    if single_date:
+        end_date = date.today().isoformat()
+        start_date = (date.today() - timedelta(days=1)).isoformat()
+    else:
+        start_date, end_date = get_total_cost_date_range()
 
     response = ce.get_cost_and_usage(
-        TimePeriod={"Start": start_date, "End": end_date},
-        Granularity="MONTHLY",
+        TimePeriod={"Start": start_date, "End": end_date, },
+        Granularity="DAILY" if single_date else "MONTHLY",
         Metrics=["AmortizedCost"],
+        GroupBy=[
+            {"Type": "DIMENSION", "Key": "SERVICE"},
+            {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}
+        ]
     )
+    return response
 
-    prev_response = ce.get_cost_and_usage(
-        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
-        Granularity="MONTHLY",
-        Metrics=["AmortizedCost"],
-    )
 
-    response_amount = float(response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
-    prev_amount = float(prev_response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
-    print("prev_amount: ", prev_amount)
-    print("response: ", prev_response["ResultsByTime"][0]["Total"]["AmortizedCost"]["Amount"])
+def process_billing_data(current_data, prev_data):
+    current_total_billing = 0.0
+    prev_total_billing = 0.0
+
+    current_time_period = current_data["ResultsByTime"][0]["TimePeriod"]
+
+    current_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in current_data["ResultsByTime"][0]["Groups"])
+    prev_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_data["ResultsByTime"][0]["Groups"])
+
+    service_billings = [
+        {
+            "service_name": item["Keys"][0],
+            "billing": float(item["Metrics"]["AmortizedCost"]["Amount"]),
+            "prev_billing": sum(float(prev_item["Metrics"]["AmortizedCost"]["Amount"]) for prev_item in prev_data["ResultsByTime"][0]["Groups"] if prev_item["Keys"][0] == item["Keys"][0])
+        }
+        for item in current_data["ResultsByTime"][0]["Groups"]
+    ]
+
+    # アカウント毎の請求額の計算
+    aggregated_account_billings = {}
+
+    for item in current_data["ResultsByTime"][0]["Groups"]:
+        if len(item["Keys"]) > 1:
+            account_id = item["Keys"][1]
+            billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
+            aggregated_account_billings.setdefault(account_id, {"billing": 0.0, "prev_billing": 0.0})
+            aggregated_account_billings[account_id]["billing"] += billing
+
+    for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
+        if len(prev_item["Keys"]) > 1:
+            account_id = prev_item["Keys"][1]
+            prev_billing = float(prev_item["Metrics"]["AmortizedCost"]["Amount"])
+            if account_id in aggregated_account_billings:
+                aggregated_account_billings[account_id]["prev_billing"] += prev_billing
+
+    account_billings = [
+        {
+            "account_id": account_id,
+            "billing": data["billing"],
+            "prev_billing": data["prev_billing"],
+        }
+        for account_id, data in aggregated_account_billings.items()
+    ]
 
     return {
-        "start": response["ResultsByTime"][0]["TimePeriod"]["Start"],
-        "end": response["ResultsByTime"][0]["TimePeriod"]["End"],
-        "billing": response_amount,
-        "prev_billing": prev_amount,
-    }
+        "start": current_time_period["Start"],
+        "end": current_time_period["End"],
+        "billing": current_total_billing,
+        "prev_billing": prev_total_billing,
+    }, service_billings, account_billings
 
 
-# サービス毎の請求額を取得する関数
-def get_service_billings() -> list:
-    (start_date, end_date) = get_total_cost_date_range()
-    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
+def main():
+    current_billing_data = get_billing_data()
+    prev_billing_data = get_billing_data(single_date=True)
 
-    response = ce.get_cost_and_usage(
-        TimePeriod={"Start": start_date, "End": end_date},
-        Granularity="MONTHLY",
-        Metrics=["AmortizedCost"],
-        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-    )
+    total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data, prev_billing_data)
 
-    prev_response = ce.get_cost_and_usage(
-        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
-        Granularity="MONTHLY",
-        Metrics=["AmortizedCost"],
-        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-    )
-
-    prev_billing_dict = {item["Keys"][0]: float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_response["ResultsByTime"][0]["Groups"]}
-
-    billings = []
-
-    for item in response["ResultsByTime"][0]["Groups"]:
-        service_name = item["Keys"][0]
-        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-        prev_billing = prev_billing_dict.get(service_name, 0.0)
-        billings.append(
-            {
-                "service_name": service_name,
-                "billing": billing,
-                "prev_billing": prev_billing,
-            }
-        )
-    return billings
-
-
-# アカウント毎の請求額を取得する関数
-def get_account_billings() -> list:
-    (start_date, end_date) = get_total_cost_date_range()
-    (prev_start_date, prev_end_date) = get_prev_cost_date_range()
-
-    response = ce.get_cost_and_usage(
-        TimePeriod={"Start": start_date, "End": end_date},
-        Granularity="MONTHLY",
-        Metrics=["AmortizedCost"],
-        GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
-    )
-
-    prev_response = ce.get_cost_and_usage(
-        TimePeriod={"Start": prev_start_date, "End": prev_end_date},
-        Granularity="MONTHLY",
-        Metrics=["AmortizedCost"],
-        GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
-    )
-
-    prev_billing_dict = {item["Keys"][0]: float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_response["ResultsByTime"][0]["Groups"]}
-
-    billings = []
-
-    for item in response["ResultsByTime"][0]["Groups"]:
-        account_id = item["Keys"][0]
-        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-        prev_billing = prev_billing_dict.get(account_id, 0.0)
-        billings.append(
-            {
-                "account_id": account_id,
-                "billing": billing,
-                "prev_billing": prev_billing,
-            }
-        )
-    return billings
+    title, details = create_message(total_billing_info, service_billings, account_billings)
+    print(title)
+    print(details)
 
 
 # メッセージを作成する関数
@@ -237,16 +206,20 @@ def create_message(
 
     # アカウント毎の請求額
     details.append("\nAccount Billing Details:")
-    for item in account_billings:
+    aggregated_account_billings = create_aggregated_account_billings(account_billings)
+    for item in aggregated_account_billings:
         account_id = item["account_id"]
-        account_name = account_name_mapping.get(account_id, account_id)
+        account_name = account_name_mapping.get(account_id, None)
         billing = round(item["billing"], 2)
         prev_billing = item["prev_billing"]
 
         if billing == 0.0:
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
-        details.append(f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)")
+        if account_name is None:
+            details.append(f"・{account_id}: {billing:.2f} USD ({prev_billing:+.2f} USD)")
+        else:
+            details.append(f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)")
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
@@ -271,6 +244,33 @@ def get_account_name_mapping() -> Dict[str, str]:
         logger.warning("Access denied to list accounts. Falling back to using account IDs.")
 
     return account_mapping
+
+
+# アカウントIDごとに請求額を集計する関数
+def create_aggregated_account_billings(account_billings: list) -> list:
+    aggregated_billings = {}
+
+    for item in account_billings:
+        account_id = item["account_id"]
+        billing = item["billing"]
+        prev_billing = item["prev_billing"]
+
+        if account_id not in aggregated_billings:
+            aggregated_billings[account_id] = {"billing": 0.0, "prev_billing": 0.0}
+
+        # 現在と前回の両方の請求額を集計
+        aggregated_billings[account_id]["billing"] += billing
+        aggregated_billings[account_id]["prev_billing"] += prev_billing
+
+    # 辞書をリストに変換
+    return [
+        {
+            "account_id": account_id,
+            "billing": data["billing"],
+            "prev_billing": data["prev_billing"],
+        }
+        for account_id, data in aggregated_billings.items()
+    ]
 
 
 # 請求額の期間を取得する関数
