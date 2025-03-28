@@ -13,20 +13,22 @@ AWSのコストを取得し、メッセージを送信します。
 - 合計コスト
 - サービスごとのコスト
 - アカウントごとのコスト
+- 上記項目の前日比
 
 ### 出力メッセージ例
 ```
-AWS Billing Notification (03/01～03/26) : 3.91 USD
+AWS Billing Notification (03/01～03/27) : 4.42 USD (+0.40 USD)
 Service Billing Details:
-・AWS Secrets Manager: 0.99 USD
-・Amazon EC2 Container Registry (ECR): 0.36 USD
-・Amazon Relational Database Service: 1.19 USD
-・Amazon Route 53: 1.00 USD
-・Amazon Simple Storage Service: 0.01 USD
-・Tax: 0.36 USD
+・AWS Cost Explorer: 0.37 USD (+0.37 USD)
+・AWS Secrets Manager: 1.03 USD (+0.02 USD)
+・Amazon EC2 Container Registry (ECR): 0.38 USD (+0.01 USD)
+・Amazon Relational Database Service: 1.24 USD (+0.00 USD)
+・Amazon Route 53: 1.00 USD (+0.00 USD)
+・Amazon Simple Storage Service: 0.01 USD (+0.00 USD)
+・Tax: 0.40 USD (+0.00 USD)
 
 Account Billing Details:
-・(${Account ID}): 3.91 USD
+・${Account ID}: 4.42 USD (+0.40 USD)
 ```
 
 ## Python 環境での確認実行方法
