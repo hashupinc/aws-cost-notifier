@@ -283,8 +283,8 @@ def create_aggregated_account_billings(account_billings: list) -> list:
     ]
 
 
-# 請求額の期間を取得する関数
 def get_total_cost_date_range() -> Tuple[str, str]:
+    """請求期間を取得する """
     start_date = date.today().replace(day=1).isoformat()
     end_date = date.today().isoformat()
 
@@ -311,8 +311,8 @@ def get_prev_cost_date_range() -> Tuple[str, str]:
     return start_date, end_date
 
 
-# シークレットマネージャからシークレットを取得する関数
 def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
+    """シークレットマネージャからシークレットを取得する"""
     # シークレット名を取得
     if secret_name is None:
         raise ValueError("Secret name must not be None")
@@ -335,8 +335,8 @@ def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
     return secret_value
 
 
-# HTTPリクエストを送信する関数
 def send_request(url: str, data: bytes, headers: MutableMapping[str, str]) -> None:
+    """リクエストを送信する"""
     req = request.Request(url, data=data, headers=headers, method="POST")
     with request.urlopen(req) as response:
         print(response.status)
