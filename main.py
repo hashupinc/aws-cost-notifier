@@ -313,9 +313,16 @@ def get_prev_cost_date_range() -> Tuple[str, str]:
 
 def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
     """シークレットマネージャからシークレットを取得する"""
+
+    # AWS Parameters and Secrets Lambda Extension を使用して、AWS Secrets Managerから効率よくシークレットを取得します。
+    # NOTE: https://docs.aws.amazon.com/ja_jp/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
+
     # シークレット名を取得
     if secret_name is None:
         raise ValueError("Secret name must not be None")
+
+    # Lambda ローカル環境で動作する AWS Secrets Manager のエンドポイントへのリクエストを準備
+    # AWS Parameters and Secrets Lambda Extension により、http://localhost:2773 で提供されるローカルエンドポイントを使用
     secrets_extension_endpoint = (
         "http://localhost:2773/secretsmanager/get?secretId=" + secret_name
     )
@@ -326,6 +333,7 @@ def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
         raise ValueError("aws sessuib token must not be None")
     headers = {"X-Aws-Parameters-Secrets-Token": aws_session_token}
 
+    # Secrets Manager へのアクセスを高速化するために拡張機能が提供するキャッシュを活用
     # シークレットマネージャからシークレットを取得
     secrets_extension_req = request.Request(secrets_extension_endpoint, headers=headers)
     with request.urlopen(secrets_extension_req) as response:
