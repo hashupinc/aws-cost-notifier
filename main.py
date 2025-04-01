@@ -15,9 +15,8 @@ ce = boto3.client("ce", region_name="us-east-1")
 org_client = boto3.client('organizations')
 
 
-# Lambdaのエントリーポイント
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
-    # 請求情報を取得する
+    """Lambdaハンドラ"""
     current_billing_data = get_billing_data()
     prev_billing_data = get_billing_data(single_date=True)
 
@@ -80,6 +79,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
 
 
 def get_billing_data(single_date=False) -> dict:
+    """請求情報を取得する"""
     if single_date:
         end_date = date.today().isoformat()
         start_date = (date.today() - timedelta(days=1)).isoformat()
@@ -176,10 +176,10 @@ def main():
     print(details)
 
 
-# メッセージを作成する関数
 def create_message(
     total_billing: dict, service_billings: list, account_billings: list
 ) -> Tuple[str, str]:
+    """メッセージを作成する"""
     start = datetime.strptime(total_billing["start"], "%Y-%m-%d").strftime("%m/%d")
 
     # Endの日付は結果に含まないため、表示上は前日にしておく
@@ -191,12 +191,7 @@ def create_message(
 
     account_id = os.environ.get("ACCOUNT_ID")
 
-    raw_title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD ({prev_total:+.2f} USD)"
-
-    if account_id:
-        title = f"{account_id} - {raw_title}"
-    else:
-        title = raw_title
+    title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD ({prev_total:+.2f} USD)"
 
     details = []
 
@@ -250,7 +245,7 @@ def get_account_name_mapping() -> Dict[str, str]:
         paginator = org_client.get_paginator('list_accounts')
 
         for page in paginator.paginate():
-            print(page)
+            logger.debug(f"Page: {page}")
             for account in page['Accounts']:
                 account_id = account['Id']
                 account_name = account['Name']
@@ -261,8 +256,8 @@ def get_account_name_mapping() -> Dict[str, str]:
     return account_mapping
 
 
-# アカウントIDごとに請求額を集計する関数
 def create_aggregated_account_billings(account_billings: list) -> list:
+    """アカウントIDごとに請求額を集計する"""
     aggregated_billings = {}
 
     for item in account_billings:
@@ -309,8 +304,8 @@ def get_total_cost_date_range() -> Tuple[str, str]:
     return start_date, end_date
 
 
-# 前日の請求期間を取得する関数
 def get_prev_cost_date_range() -> Tuple[str, str]:
+    """前日の請求期間を取得する """
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=1)).isoformat()
     return start_date, end_date
