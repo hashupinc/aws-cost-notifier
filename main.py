@@ -12,7 +12,7 @@ logger = logging.getLogger()
 ce = boto3.client("ce", region_name="us-east-1")
 
 # AWS アカウント名を取得するためのクライアント
-org_client = boto3.client('organizations')
+org_client = boto3.client("organizations")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
@@ -20,10 +20,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     current_billing_data = get_billing_data()
     prev_billing_data = get_billing_data(single_date=True)
 
-    total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data, prev_billing_data)
+    total_billing_info, service_billings, account_billings = process_billing_data(
+        current_billing_data, prev_billing_data
+    )
 
     # 投稿用のメッセージを作成する
-    (title, detail) = create_message(total_billing_info, service_billings, account_billings)
+    (title, detail) = create_message(
+        total_billing_info, service_billings, account_billings
+    )
 
     try:
         email_topic_arn = os.environ.get("EMAIL_TOPIC_ARN")
@@ -87,13 +91,16 @@ def get_billing_data(single_date=False) -> dict:
         start_date, end_date = get_total_cost_date_range()
 
     response = ce.get_cost_and_usage(
-        TimePeriod={"Start": start_date, "End": end_date, },
+        TimePeriod={
+            "Start": start_date,
+            "End": end_date,
+        },
         Granularity="DAILY" if single_date else "MONTHLY",
         Metrics=["AmortizedCost"],
         GroupBy=[
             {"Type": "DIMENSION", "Key": "SERVICE"},
-            {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}
-        ]
+            {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
+        ],
     )
     return response
 
@@ -104,8 +111,14 @@ def process_billing_data(current_data, prev_data):
 
     current_time_period = current_data["ResultsByTime"][0]["TimePeriod"]
 
-    current_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in current_data["ResultsByTime"][0]["Groups"])
-    prev_total_billing = sum(float(item["Metrics"]["AmortizedCost"]["Amount"]) for item in prev_data["ResultsByTime"][0]["Groups"])
+    current_total_billing = sum(
+        float(item["Metrics"]["AmortizedCost"]["Amount"])
+        for item in current_data["ResultsByTime"][0]["Groups"]
+    )
+    prev_total_billing = sum(
+        float(item["Metrics"]["AmortizedCost"]["Amount"])
+        for item in prev_data["ResultsByTime"][0]["Groups"]
+    )
 
     # サービスごとの請求額の集計
     aggregated_service_billings = {}
@@ -113,7 +126,9 @@ def process_billing_data(current_data, prev_data):
     for item in current_data["ResultsByTime"][0]["Groups"]:
         service_name = item["Keys"][0]
         billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-        aggregated_service_billings.setdefault(service_name, {"billing": 0.0, "prev_billing": 0.0})
+        aggregated_service_billings.setdefault(
+            service_name, {"billing": 0.0, "prev_billing": 0.0}
+        )
         aggregated_service_billings[service_name]["billing"] += billing
 
     for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
@@ -138,7 +153,9 @@ def process_billing_data(current_data, prev_data):
         if len(item["Keys"]) > 1:
             account_id = item["Keys"][1]
             billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-            aggregated_account_billings.setdefault(account_id, {"billing": 0.0, "prev_billing": 0.0})
+            aggregated_account_billings.setdefault(
+                account_id, {"billing": 0.0, "prev_billing": 0.0}
+            )
             aggregated_account_billings[account_id]["billing"] += billing
 
     for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
@@ -157,21 +174,29 @@ def process_billing_data(current_data, prev_data):
         for account_id, data in aggregated_account_billings.items()
     ]
 
-    return {
-        "start": current_time_period["Start"],
-        "end": current_time_period["End"],
-        "billing": current_total_billing,
-        "prev_billing": prev_total_billing,
-    }, service_billings, account_billings
+    return (
+        {
+            "start": current_time_period["Start"],
+            "end": current_time_period["End"],
+            "billing": current_total_billing,
+            "prev_billing": prev_total_billing,
+        },
+        service_billings,
+        account_billings,
+    )
 
 
 def main():
     current_billing_data = get_billing_data()
     prev_billing_data = get_billing_data(single_date=True)
 
-    total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data, prev_billing_data)
+    total_billing_info, service_billings, account_billings = process_billing_data(
+        current_billing_data, prev_billing_data
+    )
 
-    title, details = create_message(total_billing_info, service_billings, account_billings)
+    title, details = create_message(
+        total_billing_info, service_billings, account_billings
+    )
     print(title)
     print(details)
 
@@ -227,9 +252,13 @@ def create_message(
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
         if account_name is None:
-            details.append(f"・{account_id}: {billing:.2f} USD ({prev_billing:+.2f} USD)")
+            details.append(
+                f"・{account_id}: {billing:.2f} USD ({prev_billing:+.2f} USD)"
+            )
         else:
-            details.append(f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)")
+            details.append(
+                f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)"
+            )
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
@@ -242,16 +271,18 @@ def get_account_name_mapping() -> Dict[str, str]:
     """AWS OrganizationsからアカウントIDと名前のマッピングを取得する"""
     account_mapping = {}
     try:
-        paginator = org_client.get_paginator('list_accounts')
+        paginator = org_client.get_paginator("list_accounts")
 
         for page in paginator.paginate():
             logger.debug(f"Page: {page}")
-            for account in page['Accounts']:
-                account_id = account['Id']
-                account_name = account['Name']
+            for account in page["Accounts"]:
+                account_id = account["Id"]
+                account_name = account["Name"]
                 account_mapping[account_id] = account_name
     except org_client.exceptions.AccessDeniedException:
-        logger.warning("Access denied to list accounts. Falling back to using account IDs.")
+        logger.warning(
+            "Access denied to list accounts. Falling back to using account IDs."
+        )
 
     return account_mapping
 
@@ -284,7 +315,7 @@ def create_aggregated_account_billings(account_billings: list) -> list:
 
 
 def get_total_cost_date_range() -> Tuple[str, str]:
-    """請求期間を取得する """
+    """請求期間を取得する"""
     start_date = date.today().replace(day=1).isoformat()
     end_date = date.today().isoformat()
 
@@ -305,7 +336,7 @@ def get_total_cost_date_range() -> Tuple[str, str]:
 
 
 def get_prev_cost_date_range() -> Tuple[str, str]:
-    """前日の請求期間を取得する """
+    """前日の請求期間を取得する"""
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=1)).isoformat()
     return start_date, end_date
