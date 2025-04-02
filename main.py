@@ -326,12 +326,6 @@ def get_total_cost_date_range() -> Tuple[str, str]:
         begin_of_month = end_of_month.replace(day=1)
         return begin_of_month.date().isoformat(), end_date
 
-    # デバッグ用に先月1日から先月末日までの範囲にする
-    # end_of_month = datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=-1)
-    # begin_of_month = end_of_month.replace(day=1)
-    # start_date = begin_of_month.date().isoformat()
-    # end_date = end_of_month.date().isoformat()
-
     return start_date, end_date
 
 
