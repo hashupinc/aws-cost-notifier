@@ -16,7 +16,19 @@ org_client = boto3.client("organizations")
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> None:
-    """Lambdaハンドラ"""
+    """AWS Lambda関数のエントリポイントとして、請求情報を処理し、通知を送信する。
+
+    この関数は、AWSの請求データを取得し、前日の請求データと比較した結果を評価します。
+    請求情報に基づいて生成されたメッセージを、設定された宛先（メール、Slack、LINE）に送信します。
+    宛先が設定されていない場合はエラーログを出力します。
+
+    Args:
+        event (Dict[str, Any]): Lambda関数に渡されるイベントオブジェクト。
+        context (Any): ランタイム情報を提供するオブジェクト。
+
+    Raises:
+        Exception: メッセージ送信時または処理中にエラーが発生した場合に例外をスローします。
+    """
     current_billing_data = get_billing_data()
     prev_billing_data = get_billing_data(single_date=True)
 
@@ -83,7 +95,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
 
 
 def get_billing_data(single_date=False) -> dict:
-    """請求情報を取得する"""
+    """AWSのCost Explorerから請求情報を取得する。
+
+    この関数は、指定された期間のAWS請求データを取得します。
+    デフォルトでは当月全体のデータを取得しますが、`single_date`フラグが
+    Trueの場合は、直近1日のデータを取得します。
+
+    Args:
+        single_date (bool): Trueに設定した場合、前日の請求データを取得する。
+                            デフォルトはFalse。
+
+    Returns:
+        dict: 請求期間、グループ化されたサービス、およびリンクアカウントごとの
+              請求情報を含む辞書。
+
+    Raises:
+        boto3のクライアントメソッドの呼び出しに失敗した場合、その例外が伝播します。
+    """
     if single_date:
         end_date = date.today().isoformat()
         start_date = (date.today() - timedelta(days=1)).isoformat()
@@ -106,6 +134,21 @@ def get_billing_data(single_date=False) -> dict:
 
 
 def process_billing_data(current_data, prev_data):
+    """請求データを処理し、集計結果を返す。
+
+    現在の請求データと前日の請求データを受け取り、総請求額、
+    サービスごとの請求額、アカウントごとの請求額を計算してまとめます。
+
+    Args:
+        current_data (dict): 現在の請求期間のデータを含む辞書。
+        prev_data (dict): 前日の請求データを含む辞書。
+
+    Returns:
+        Tuple[dict, list, list]:
+            - 総請求額の情報を含む辞書。開始日、終了日、請求額、前日の請求額を含む。
+            - サービスごとの請求情報をまとめたリスト。
+            - アカウントごとの請求情報をまとめたリスト。
+    """
     current_total_billing = 0.0
     prev_total_billing = 0.0
 
@@ -187,6 +230,12 @@ def process_billing_data(current_data, prev_data):
 
 
 def main():
+    """AWS請求情報を取得し、処理した結果を出力する。
+
+    この関数はAWSの請求データを取得し、現在の請求期間と前日の請求期間のデータを処理します。
+    複数のレベル（総額、サービス別、アカウント別）で請求情報を整理し、
+    メッセージを作成してコンソールに表示します。
+    """
     current_billing_data = get_billing_data()
     prev_billing_data = get_billing_data(single_date=True)
 
@@ -204,7 +253,20 @@ def main():
 def create_message(
     total_billing: dict, service_billings: list, account_billings: list
 ) -> Tuple[str, str]:
-    """メッセージを作成する"""
+    """請求情報に基づいてメッセージのタイトルと詳細を作成する。
+
+    与えられた請求情報から、全体の請求額、サービスごとの請求額、および
+    アカウントごとの請求額に基づいて、人間が読みやすい形式のメッセージを作成します。
+    メッセージは、通知に使用できるタイトルと詳細の2つの文字列を返します。
+
+    Args:
+        total_billing (dict): 全体の請求情報を含む辞書。'start', 'end', 'billing', 'prev_billing' キーを含む。
+        service_billings (list): 各サービスごとの請求情報を含むリスト。各項目は'dict'であり、'service_name', 'billing', 'prev_billing'を含む。
+        account_billings (list): 各アカウントごとの請求情報を含むリスト。各項目は'dict'であり、'account_id', 'billing', 'prev_billing'を含む。
+
+    Returns:
+        Tuple[str, str]: メッセージのタイトルと詳細を表す2つの文字列。
+    """
     start = datetime.strptime(total_billing["start"], "%Y-%m-%d").strftime("%m/%d")
 
     # Endの日付は結果に含まないため、表示上は前日にしておく
@@ -268,7 +330,20 @@ def create_message(
 
 
 def get_account_name_mapping() -> Dict[str, str]:
-    """AWS OrganizationsからアカウントIDと名前のマッピングを取得する"""
+    """AWS OrganizationsからアカウントIDと名前のマッピングを取得する。
+
+    AWS Organizations APIを使用して、AWSアカウントIDとその対応するアカウント名の
+    マッピングを取得します。この関数は呼び出し元の権限によっては
+    アクセスが拒否される可能性があります。その場合は、アカウントIDのみを使用した
+    代替案をログに警告として記録します。
+
+    Returns:
+        Dict[str, str]: アカウントIDをキー、アカウント名を値とする辞書。
+
+    Raises:
+        Boto3が特定の例外を投げた場合はその例外が伝播します。ただし、アクセス権がない場合は
+        警告を出力して処理を続行します。
+    """
     account_mapping = {}
     try:
         paginator = org_client.get_paginator("list_accounts")
@@ -288,7 +363,18 @@ def get_account_name_mapping() -> Dict[str, str]:
 
 
 def create_aggregated_account_billings(account_billings: list) -> list:
-    """アカウントIDごとに請求額を集計する"""
+    """
+    アカウントIDごとの請求額を集計する。
+
+    各アカウントIDに対して現在および前回の請求額を合計します。
+    結果は、アカウントID、合計請求額、前回の請求額を含む辞書のリストとして返されます。
+
+    Args:
+        account_billings (list): 'account_id', 'billing', 'prev_billing'を含む各アカウントの請求データのリスト。
+
+    Returns:
+        list: 'account_id'、'billing'、'prev_billing'を含む集計された請求データのリスト。
+    """
     aggregated_billings = {}
 
     for item in account_billings:
@@ -315,7 +401,15 @@ def create_aggregated_account_billings(account_billings: list) -> list:
 
 
 def get_total_cost_date_range() -> Tuple[str, str]:
-    """請求期間を取得する"""
+    """請求期間を取得する
+
+    この関数は、当月の開始日から今日までの請求期間を計算します。
+    ただし、月初の場合は先月の1日から当月の1日までの期間を取得します。
+    これは、Cost Explorer APIの制約により、開始日と終了日に同じ日付を指定できないためです。
+
+    Returns:
+        Tuple[str, str]: ISO形式の開始日と終了日を含むタプル。
+    """
     start_date = date.today().replace(day=1).isoformat()
     end_date = date.today().isoformat()
 
@@ -330,17 +424,40 @@ def get_total_cost_date_range() -> Tuple[str, str]:
 
 
 def get_prev_cost_date_range() -> Tuple[str, str]:
-    """前日の請求期間を取得する"""
+    """前日の請求期間を取得する
+
+    この関数は、前日の請求期間を表す開始日と終了日を計算します。
+    開始日は今日の1日前、終了日は今日（非包括）として設定されます。
+
+    Returns:
+        Tuple[str, str]: ISO形式の日付で表された開始日と終了日を含むタプル。
+    """
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=1)).isoformat()
     return start_date, end_date
 
 
 def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
-    """シークレットマネージャからシークレットを取得する"""
+    """シークレットマネージャからシークレットを取得する
 
-    # AWS Parameters and Secrets Lambda Extension を使用して、AWS Secrets Managerから効率よくシークレットを取得します。
-    # NOTE: https://docs.aws.amazon.com/ja_jp/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
+    AWSのParameters and Secrets Lambda Extensionを使用して、Secrets Managerから
+    効率的にシークレットを取得します。この関数はローカルのエンドポイントを
+    使用してシークレットにアクセスします。
+
+    Args:
+        secret_name (Optional[str]): 取得したいシークレットの名前。
+        secret_key (str): シークレットデータの中で取得したい特定のキー。
+
+    Returns:
+        Any: 指定したシークレットキーに対応する値。
+
+    Raises:
+        ValueError: シークレット名またはAWSセッショントークンが設定されていない場合に発生します。
+
+    Note:
+        詳細については、AWSの公式ドキュメントを参照してください:
+        https://docs.aws.amazon.com/ja_jp/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
+    """
 
     # シークレット名を取得
     if secret_name is None:
@@ -369,7 +486,23 @@ def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
 
 
 def send_request(url: str, data: bytes, headers: MutableMapping[str, str]) -> None:
-    """リクエストを送信する"""
+    """指定されたURLにHTTP POSTリクエストを送信する。
+
+    提供されたデータとヘッダーを使用して指定されたURLに対してHTTP POSTリクエストを実行します。
+    レスポンスが正常に返ってくるかを確認するために、ステータスコードを出力します。
+
+    Args:
+        url (str): リクエストを送信する先のURL。
+        data (bytes): POSTリクエストの本文として送信されるデータ。
+        headers (MutableMapping[str, str]): リクエストに含めるヘッダー情報を表す辞書。
+
+    Returns:
+        None
+
+    Raises:
+        urllib.error.URLError: リクエストの送信中にURLにアクセスできない場合に発生します。
+        urllib.error.HTTPError: リクエストがHTTPエラーのステータスコードを返した場合に発生します。
+    """
     req = request.Request(url, data=data, headers=headers, method="POST")
     with request.urlopen(req) as response:
         print(response.status)
