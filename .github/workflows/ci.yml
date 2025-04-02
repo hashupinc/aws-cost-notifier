@@ -6,7 +6,7 @@ on:
       - "main.py"
       - "Makefile"
       - "pyproject.toml"
-      - template.yml
+      - template.yaml
 
 jobs:
   lint-format:
