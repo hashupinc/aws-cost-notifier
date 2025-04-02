@@ -27,10 +27,6 @@ jobs:
         run: |
           poetry install
 
-      - name: Run Black check (dry run)
+      - name: Lint
         run: |
-          poetry run black --check .
-
-    #   - name: Run Flake8
-    #     run: |
-    #       poetry run flake8 .
+          make lint
