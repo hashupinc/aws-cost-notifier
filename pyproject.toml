@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "aws-cost-notifier"
+version = "0.1.0"
+description = ""
+authors = ["zingerbread <tanahashi@hashup.co.jp>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.9"
+boto3 = "^1.37.21"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
+flake8 = "^7.2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

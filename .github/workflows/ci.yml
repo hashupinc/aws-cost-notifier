@@ -1,0 +1,32 @@
+name: Lint & Format Check
+
+on:
+  pull_request:
+    paths:
+      - "main.py"
+      - "Makefile"
+      - "pyproject.toml"
+      - template.yaml
+
+jobs:
+  lint-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Poetry
+        run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Install dependencies with Poetry
+        run: |
+          poetry install
+
+      - name: Lint
+        run: |
+          make lint
