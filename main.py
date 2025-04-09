@@ -30,11 +30,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         Exception: メッセージ送信時または処理中にエラーが発生した場合に例外をスローします。
     """
     current_billing_data = get_billing_data()
-    prev_billing_data = get_billing_data(single_date=True)
 
-    total_billing_info, service_billings, account_billings = process_billing_data(
-        current_billing_data, prev_billing_data
-    )
+    total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data)
 
     # 投稿用のメッセージを作成する
     (title, detail) = create_message(
