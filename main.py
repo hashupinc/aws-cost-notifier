@@ -378,7 +378,7 @@ def create_aggregated_account_billings(account_billings: list) -> list:
     ]
 
 
-def get_cost_date_range(only_until_yesterday=False) -> Tuple[str, str]:
+def get_cost_date_range() -> Tuple[str, str]:
     """請求期間を取得する
 
     この関数は、当月の開始日から今日までの請求期間を計算します。
@@ -392,7 +392,9 @@ def get_cost_date_range(only_until_yesterday=False) -> Tuple[str, str]:
         Tuple[str, str]: ISO形式の開始日と終了日を含むタプル。
     """
     start_date = date.today().replace(day=1).isoformat()
-    end_date = date.today().isoformat()
+    # end_date = date.today().isoformat()
+    # TODO: 金額の確定が最大24時間遅れるため、確認のために enddateを前日にしているため確認後に戻す
+    end_date = (date.today() + timedelta(days=1)).isoformat()
 
     # get_cost_and_usage()のstartとendに同じ日付は指定不可のため、
     # 「今日が1日」なら、「先月1日から今月1日（今日）」までの範囲にする
@@ -400,9 +402,6 @@ def get_cost_date_range(only_until_yesterday=False) -> Tuple[str, str]:
         end_of_month = datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=-1)
         begin_of_month = end_of_month.replace(day=1)
         start_date = begin_of_month.isoformat()
-
-    if only_until_yesterday:
-        end_date = (date.today() - timedelta(days=1)).isoformat()
 
     return start_date, end_date
 
