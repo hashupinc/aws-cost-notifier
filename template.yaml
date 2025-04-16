@@ -211,7 +211,9 @@ Resources:
               """
               current_billing_data = get_billing_data()
           
-              total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data)
+              total_billing_info, service_billings, account_billings = process_billing_data(
+                  current_billing_data
+              )
           
               # 投稿用のメッセージを作成する
               (title, detail) = create_message(
@@ -342,7 +344,10 @@ Resources:
                       if service_name == "Tax":
                           continue
                       if service_name not in aggregated_service_billings:
-                          aggregated_service_billings[service_name] = {"billing": 0.0, "prev_billing": 0.0}
+                          aggregated_service_billings[service_name] = {
+                              "billing": 0.0,
+                              "prev_billing": 0.0,
+                          }
           
                       aggregated_service_billings[service_name]["billing"] += billing
                       if day_index == len(daily_data) - 1:  # 「前日」の合計
@@ -352,7 +357,10 @@ Resources:
                       if len(item["Keys"]) > 1:
                           account_id = item["Keys"][1]
                           if account_id not in aggregated_account_billings:
-                              aggregated_account_billings[account_id] = {"billing": 0.0, "prev_billing": 0.0}
+                              aggregated_account_billings[account_id] = {
+                                  "billing": 0.0,
+                                  "prev_billing": 0.0,
+                              }
           
                           aggregated_account_billings[account_id]["billing"] += billing
                           if day_index == len(daily_data) - 1:  # 「前日」の合計
@@ -366,12 +374,20 @@ Resources:
           
               # サービスおよびアカウントのリストを作成
               service_billings = [
-                  {"service_name": service_name, "billing": data["billing"], "prev_billing": data["prev_billing"]}
+                  {
+                      "service_name": service_name,
+                      "billing": data["billing"],
+                      "prev_billing": data["prev_billing"],
+                  }
                   for service_name, data in aggregated_service_billings.items()
               ]
           
               account_billings = [
-                  {"account_id": account_id, "billing": data["billing"], "prev_billing": data["prev_billing"]}
+                  {
+                      "account_id": account_id,
+                      "billing": data["billing"],
+                      "prev_billing": data["prev_billing"],
+                  }
                   for account_id, data in aggregated_account_billings.items()
               ]
           
@@ -400,7 +416,9 @@ Resources:
               """
               current_billing_data = get_billing_data()
           
-              total_billing_info, service_billings, account_billings = process_billing_data(current_billing_data)
+              total_billing_info, service_billings, account_billings = process_billing_data(
+                  current_billing_data
+              )
           
               title, details = create_message(
                   total_billing_info, service_billings, account_billings
@@ -451,7 +469,9 @@ Resources:
                   if billing == 0.0:
                       # 請求無し（0.0 USD）の場合は、内訳を表示しない
                       continue
-                  details.append(f"・{service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)")
+                  details.append(
+                      f"・{service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
+                  )
           
               # 全サービスの請求無し（0.0 USD）の場合は以下メッセージを追加
               if not details:
