@@ -157,6 +157,10 @@ def process_billing_data(current_data):
 
             # サービスの請求額の集計
             service_name = item["Keys"][0]
+
+            # 「Tax」サービスは除外
+            if service_name == "Tax":
+                continue
             if service_name not in aggregated_service_billings:
                 aggregated_service_billings[service_name] = {"billing": 0.0, "prev_billing": 0.0}
 
