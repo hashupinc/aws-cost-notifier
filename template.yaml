@@ -334,15 +334,17 @@ Resources:
           
               for day_index, day_data in enumerate(daily_data):
                   for item in day_data["Groups"]:
-                      billing = float(item["Metrics"]["UnblendedCost"]["Amount"])
-                      total_billing += billing
-          
-                      # サービスの請求額の集計
                       service_name = item["Keys"][0]
           
                       # 「Tax」サービスは除外
                       if service_name == "Tax":
                           continue
+          
+                      # 請求額を取得
+                      billing = float(item["Metrics"]["UnblendedCost"]["Amount"])
+                      total_billing += billing
+          
+                      # サービスごとの請求額の集計
                       if service_name not in aggregated_service_billings:
                           aggregated_service_billings[service_name] = {
                               "billing": 0.0,
