@@ -31,13 +31,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
     """
     current_billing_data = get_billing_data()
 
-    total_billing_info, service_billings, account_billings = process_billing_data(
-        current_billing_data
+    total_billing_info, service_billings, account_billings, tax_billing = (
+        process_billing_data(current_billing_data)
     )
 
     # 投稿用のメッセージを作成する
     (title, detail) = create_message(
-        total_billing_info, service_billings, account_billings
+        total_billing_info, service_billings, account_billings, tax_billing
     )
 
     try:
