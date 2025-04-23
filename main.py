@@ -151,6 +151,7 @@ def process_billing_data(current_data):
 
     # 全体の請求額を計算
     total_billing = 0.0
+    tax_billing = 0.0
 
     for day_index, day_data in enumerate(daily_data):
         for item in day_data["Groups"]:
@@ -158,6 +159,7 @@ def process_billing_data(current_data):
 
             # 「Tax」サービスは除外
             if service_name == "Tax":
+                tax_billing += float(item["Metrics"]["UnblendedCost"]["Amount"])
                 continue
 
             # 請求額を取得
@@ -226,6 +228,7 @@ def process_billing_data(current_data):
         },
         service_billings,
         account_billings,
+        tax_billing,
     )
 
 
@@ -238,19 +241,19 @@ def main():
     """
     current_billing_data = get_billing_data()
 
-    total_billing_info, service_billings, account_billings = process_billing_data(
+    total_billing_info, service_billings, account_billings, tax_billing = process_billing_data(
         current_billing_data
     )
 
     title, details = create_message(
-        total_billing_info, service_billings, account_billings
+        total_billing_info, service_billings, account_billings, tax_billing
     )
     print(title)
     print(details)
 
 
 def create_message(
-    total_billing: dict, service_billings: list, account_billings: list
+    total_billing: dict, service_billings: list, account_billings: list, tax_billing: float
 ) -> Tuple[str, str]:
     """請求情報に基づいてメッセージのタイトルと詳細を作成する。
 
@@ -326,6 +329,12 @@ def create_message(
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
         details.append("No account charge this period at present.")
+
+    # Taxの請求額
+    if tax_billing > 0.0:
+        details.append(f"\nTax Billing: {tax_billing:.02f} USD")
+    else:
+        details.append("No tax charge this period at present.")
 
     return title, "\n".join(details)
 
