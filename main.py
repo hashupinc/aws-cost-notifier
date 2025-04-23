@@ -241,8 +241,8 @@ def main():
     """
     current_billing_data = get_billing_data()
 
-    total_billing_info, service_billings, account_billings, tax_billing = process_billing_data(
-        current_billing_data
+    total_billing_info, service_billings, account_billings, tax_billing = (
+        process_billing_data(current_billing_data)
     )
 
     title, details = create_message(
@@ -253,7 +253,10 @@ def main():
 
 
 def create_message(
-    total_billing: dict, service_billings: list, account_billings: list, tax_billing: float
+    total_billing: dict,
+    service_billings: list,
+    account_billings: list,
+    tax_billing: float,
 ) -> Tuple[str, str]:
     """請求情報に基づいてメッセージのタイトルと詳細を作成する。
 
