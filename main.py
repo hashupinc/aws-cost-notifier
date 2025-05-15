@@ -30,15 +30,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         Exception: メッセージ送信時または処理中にエラーが発生した場合に例外をスローします。
     """
     current_billing_data = get_billing_data()
-    prev_billing_data = get_billing_data(single_date=True)
 
-    total_billing_info, service_billings, account_billings = process_billing_data(
-        current_billing_data, prev_billing_data
+    total_billing_info, service_billings, account_billings, tax_billing = (
+        process_billing_data(current_billing_data)
     )
 
     # 投稿用のメッセージを作成する
     (title, detail) = create_message(
-        total_billing_info, service_billings, account_billings
+        total_billing_info, service_billings, account_billings, tax_billing
     )
 
     try:
@@ -94,7 +93,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         raise e
 
 
-def get_billing_data(single_date=False) -> dict:
+def get_billing_data() -> dict:
     """AWSのCost Explorerから請求情報を取得する。
 
     この関数は、指定された期間のAWS請求データを取得します。
@@ -112,19 +111,15 @@ def get_billing_data(single_date=False) -> dict:
     Raises:
         boto3のクライアントメソッドの呼び出しに失敗した場合、その例外が伝播します。
     """
-    if single_date:
-        end_date = date.today().isoformat()
-        start_date = (date.today() - timedelta(days=1)).isoformat()
-    else:
-        start_date, end_date = get_total_cost_date_range()
+    start_date, end_date = get_cost_date_range()
 
     response = ce.get_cost_and_usage(
         TimePeriod={
             "Start": start_date,
             "End": end_date,
         },
-        Granularity="DAILY" if single_date else "MONTHLY",
-        Metrics=["AmortizedCost"],
+        Granularity="DAILY",
+        Metrics=["UnblendedCost"],
         GroupBy=[
             {"Type": "DIMENSION", "Key": "SERVICE"},
             {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
@@ -133,7 +128,7 @@ def get_billing_data(single_date=False) -> dict:
     return response
 
 
-def process_billing_data(current_data, prev_data):
+def process_billing_data(current_data):
     """請求データを処理し、集計結果を返す。
 
     現在の請求データと前日の請求データを受け取り、総請求額、
@@ -141,7 +136,6 @@ def process_billing_data(current_data, prev_data):
 
     Args:
         current_data (dict): 現在の請求期間のデータを含む辞書。
-        prev_data (dict): 前日の請求データを含む辞書。
 
     Returns:
         Tuple[dict, list, list]:
@@ -149,37 +143,60 @@ def process_billing_data(current_data, prev_data):
             - サービスごとの請求情報をまとめたリスト。
             - アカウントごとの請求情報をまとめたリスト。
     """
-    current_total_billing = 0.0
-    prev_total_billing = 0.0
+    daily_data = current_data["ResultsByTime"]
 
-    current_time_period = current_data["ResultsByTime"][0]["TimePeriod"]
-
-    current_total_billing = sum(
-        float(item["Metrics"]["AmortizedCost"]["Amount"])
-        for item in current_data["ResultsByTime"][0]["Groups"]
-    )
-    prev_total_billing = sum(
-        float(item["Metrics"]["AmortizedCost"]["Amount"])
-        for item in prev_data["ResultsByTime"][0]["Groups"]
-    )
-
-    # サービスごとの請求額の集計
+    # 各サービスとアカウントの総請求額を格納する辞書
     aggregated_service_billings = {}
+    aggregated_account_billings = {}
 
-    for item in current_data["ResultsByTime"][0]["Groups"]:
-        service_name = item["Keys"][0]
-        billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-        aggregated_service_billings.setdefault(
-            service_name, {"billing": 0.0, "prev_billing": 0.0}
-        )
-        aggregated_service_billings[service_name]["billing"] += billing
+    # 全体の請求額を計算
+    total_billing = 0.0
+    tax_billing = 0.0
 
-    for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
-        service_name = prev_item["Keys"][0]
-        prev_billing = float(prev_item["Metrics"]["AmortizedCost"]["Amount"])
-        if service_name in aggregated_service_billings:
-            aggregated_service_billings[service_name]["prev_billing"] += prev_billing
+    for day_index, day_data in enumerate(daily_data):
+        for item in day_data["Groups"]:
+            service_name = item["Keys"][0]
 
+            # 「Tax」サービスは除外
+            if service_name == "Tax":
+                tax_billing += float(item["Metrics"]["UnblendedCost"]["Amount"])
+                continue
+
+            # 請求額を取得
+            billing = float(item["Metrics"]["UnblendedCost"]["Amount"])
+            total_billing += billing
+
+            # サービスごとの請求額の集計
+            if service_name not in aggregated_service_billings:
+                aggregated_service_billings[service_name] = {
+                    "billing": 0.0,
+                    "prev_billing": 0.0,
+                }
+
+            aggregated_service_billings[service_name]["billing"] += billing
+            if day_index == len(daily_data) - 1:  # 「前日」の合計
+                aggregated_service_billings[service_name]["prev_billing"] += billing
+
+            # アカウントごとの請求額の集計
+            if len(item["Keys"]) > 1:
+                account_id = item["Keys"][1]
+                if account_id not in aggregated_account_billings:
+                    aggregated_account_billings[account_id] = {
+                        "billing": 0.0,
+                        "prev_billing": 0.0,
+                    }
+
+                aggregated_account_billings[account_id]["billing"] += billing
+                if day_index == len(daily_data) - 1:  # 「前日」の合計
+                    aggregated_account_billings[account_id]["prev_billing"] += billing
+
+    # 前日から当日への増加分を計算
+    prev_day_total_billing = sum(
+        float(item["Metrics"]["UnblendedCost"]["Amount"])
+        for item in daily_data[-1]["Groups"]
+    )
+
+    # サービスおよびアカウントのリストを作成
     service_billings = [
         {
             "service_name": service_name,
@@ -188,25 +205,6 @@ def process_billing_data(current_data, prev_data):
         }
         for service_name, data in aggregated_service_billings.items()
     ]
-
-    # アカウント毎の請求額の計算
-    aggregated_account_billings = {}
-
-    for item in current_data["ResultsByTime"][0]["Groups"]:
-        if len(item["Keys"]) > 1:
-            account_id = item["Keys"][1]
-            billing = float(item["Metrics"]["AmortizedCost"]["Amount"])
-            aggregated_account_billings.setdefault(
-                account_id, {"billing": 0.0, "prev_billing": 0.0}
-            )
-            aggregated_account_billings[account_id]["billing"] += billing
-
-    for prev_item in prev_data["ResultsByTime"][0]["Groups"]:
-        if len(prev_item["Keys"]) > 1:
-            account_id = prev_item["Keys"][1]
-            prev_billing = float(prev_item["Metrics"]["AmortizedCost"]["Amount"])
-            if account_id in aggregated_account_billings:
-                aggregated_account_billings[account_id]["prev_billing"] += prev_billing
 
     account_billings = [
         {
@@ -217,15 +215,20 @@ def process_billing_data(current_data, prev_data):
         for account_id, data in aggregated_account_billings.items()
     ]
 
+    # 開始日と終了日を取得
+    start_date = daily_data[0]["TimePeriod"]["Start"]
+    end_date = daily_data[-1]["TimePeriod"]["End"]
+
     return (
         {
-            "start": current_time_period["Start"],
-            "end": current_time_period["End"],
-            "billing": current_total_billing,
-            "prev_billing": prev_total_billing,
+            "start": start_date,
+            "end": end_date,
+            "billing": total_billing,
+            "prev_billing": prev_day_total_billing,
         },
         service_billings,
         account_billings,
+        tax_billing,
     )
 
 
@@ -237,21 +240,23 @@ def main():
     メッセージを作成してコンソールに表示します。
     """
     current_billing_data = get_billing_data()
-    prev_billing_data = get_billing_data(single_date=True)
 
-    total_billing_info, service_billings, account_billings = process_billing_data(
-        current_billing_data, prev_billing_data
+    total_billing_info, service_billings, account_billings, tax_billing = (
+        process_billing_data(current_billing_data)
     )
 
     title, details = create_message(
-        total_billing_info, service_billings, account_billings
+        total_billing_info, service_billings, account_billings, tax_billing
     )
     print(title)
     print(details)
 
 
 def create_message(
-    total_billing: dict, service_billings: list, account_billings: list
+    total_billing: dict,
+    service_billings: list,
+    account_billings: list,
+    tax_billing: float,
 ) -> Tuple[str, str]:
     """請求情報に基づいてメッセージのタイトルと詳細を作成する。
 
@@ -278,7 +283,7 @@ def create_message(
 
     account_id = os.environ.get("ACCOUNT_ID")
 
-    title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.2f} USD ({prev_total:+.2f} USD)"
+    title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.02f} USD ({prev_total:+.02f} USD)"
 
     details = []
 
@@ -286,13 +291,15 @@ def create_message(
     details.append("Service Billing Details:")
     for item in service_billings:
         service_name = item["service_name"]
-        billing = round(item["billing"], 2)
+        billing = item["billing"]
         prev_billing = item["prev_billing"]
 
         if billing == 0.0:
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
-        details.append(f"・{service_name}: {billing:.2f} USD ({prev_billing:+.2f} USD)")
+        details.append(
+            f"・{service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
+        )
 
     # 全サービスの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not details:
@@ -307,7 +314,7 @@ def create_message(
     for item in aggregated_account_billings:
         account_id = item["account_id"]
         account_name = account_name_mapping.get(account_id, None)
-        billing = round(item["billing"], 2)
+        billing = item["billing"]
         prev_billing = item["prev_billing"]
 
         if billing == 0.0:
@@ -315,16 +322,22 @@ def create_message(
             continue
         if account_name is None:
             details.append(
-                f"・{account_id}: {billing:.2f} USD ({prev_billing:+.2f} USD)"
+                f"・{account_id}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
             )
         else:
             details.append(
-                f"・{account_name} ({account_id}): {billing:.2f} USD ({prev_billing:+.2f} USD)"
+                f"・{account_name} ({account_id}): {billing:.02f} USD ({prev_billing:+.02f} USD)"
             )
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
     if not any(item["billing"] != "0.0" for item in account_billings):
         details.append("No account charge this period at present.")
+
+    # Taxの請求額
+    if tax_billing > 0.0:
+        details.append(f"\nTax Billing: {tax_billing:.02f} USD")
+    else:
+        details.append("No tax charge this period at present.")
 
     return title, "\n".join(details)
 
@@ -400,40 +413,31 @@ def create_aggregated_account_billings(account_billings: list) -> list:
     ]
 
 
-def get_total_cost_date_range() -> Tuple[str, str]:
+def get_cost_date_range() -> Tuple[str, str]:
     """請求期間を取得する
 
     この関数は、当月の開始日から今日までの請求期間を計算します。
     ただし、月初の場合は先月の1日から当月の1日までの期間を取得します。
     これは、Cost Explorer APIの制約により、開始日と終了日に同じ日付を指定できないためです。
 
+    Args:
+        only_until_yesterday (bool): True に設定した場合、終了日を前日に設定します。
+
     Returns:
         Tuple[str, str]: ISO形式の開始日と終了日を含むタプル。
     """
     start_date = date.today().replace(day=1).isoformat()
-    end_date = date.today().isoformat()
+    # end_date = date.today().isoformat()
+    # TODO: 金額の確定が最大24時間遅れるため、確認のために enddateを前日にしているため確認後に戻す
+    end_date = (date.today() - timedelta(days=1)).isoformat()
 
     # get_cost_and_usage()のstartとendに同じ日付は指定不可のため、
     # 「今日が1日」なら、「先月1日から今月1日（今日）」までの範囲にする
     if start_date == end_date:
         end_of_month = datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=-1)
         begin_of_month = end_of_month.replace(day=1)
-        return begin_of_month.date().isoformat(), end_date
+        start_date = begin_of_month.isoformat()
 
-    return start_date, end_date
-
-
-def get_prev_cost_date_range() -> Tuple[str, str]:
-    """前日の請求期間を取得する
-
-    この関数は、前日の請求期間を表す開始日と終了日を計算します。
-    開始日は今日の1日前、終了日は今日（非包括）として設定されます。
-
-    Returns:
-        Tuple[str, str]: ISO形式の日付で表された開始日と終了日を含むタプル。
-    """
-    end_date = date.today().isoformat()
-    start_date = (date.today() - timedelta(days=1)).isoformat()
     return start_date, end_date
 
 

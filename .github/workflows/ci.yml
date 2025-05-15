@@ -21,7 +21,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install Poetry
-        run: curl -sSL https://install.python-poetry.org | python3 -
+        run: curl -sSL https://install.python-poetry.org | POETRY_VERSION=2.1.2 python3 -
 
       - name: Install dependencies with Poetry
         run: |
