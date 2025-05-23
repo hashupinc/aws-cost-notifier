@@ -427,8 +427,6 @@ def get_cost_date_range() -> Tuple[str, str]:
         Tuple[str, str]: ISO形式の開始日と終了日を含むタプル。
     """
     start_date = date.today().replace(day=1).isoformat()
-    # end_date = date.today().isoformat()
-    # TODO: 金額の確定が最大24時間遅れるため、確認のために enddateを前日にしているため確認後に戻す
     end_date = (date.today() - timedelta(days=1)).isoformat()
 
     # get_cost_and_usage()のstartとendに同じ日付は指定不可のため、
