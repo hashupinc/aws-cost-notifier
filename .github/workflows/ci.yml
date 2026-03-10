@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
@@ -24,9 +24,15 @@ jobs:
         run: curl -sSL https://install.python-poetry.org | POETRY_VERSION=2.1.2 python3 -
 
       - name: Install dependencies with Poetry
-        run: |
-          poetry install
+        run: poetry install
 
       - name: Lint
+        run: make lint
+
+      - name: Format check
+        run: make format-check
+
+      - name: Template sync check
         run: |
-          make lint
+          make update-template
+          git diff --exit-code template.yaml

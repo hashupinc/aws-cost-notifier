@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+code_without_main.txt
+temp.yaml
+CLAUDE.local.md
