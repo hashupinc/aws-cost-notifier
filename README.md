@@ -1,26 +1,22 @@
 # aws-cost-notifier
 
-## 概要
-AWSのコストを取得し、メッセージを送信します。
+AWS のコストを定期的に取得し、Email・Slack・LINE に通知する Lambda アプリケーションです。
 
 ## 機能
-- AWSのコストを取得し、メッセージを送信します。
-- CFn(template.yaml) をアップロードすることで、上記機能をAWS環境にデプロイすることができます。
 
-### 集計期間
+- AWS Cost Explorer API から日次の請求データを取得
+- サービス別・アカウント別のコスト内訳と前日比を通知
+- CFn (`template.yaml`) をアップロードすることで AWS 環境にデプロイ可能
+
+## 集計期間
+
 - 実行月の1日から2日前までのコストを取得します。
-  - 例(実行日... 2025/03/20): 2025/03/01 ~ 2025/03/18
+  - 例（実行日: 2025/03/20）: 2025/03/01 〜 2025/03/18
 - 実行日が1日の場合は、前月の1日から2日前までのコストを取得します。
-  - 例(実行日... 2025/04/01): 2025/03/01 ~ 2025/03/30
+  - 例（実行日: 2025/04/01）: 2025/03/01 〜 2025/03/30
 
-### メッセージ内容
-- 合計コスト
-- サービスごとのコスト
-- アカウントごとのコスト
-- 上記項目の前日比
-- Tax
+## 出力メッセージ例
 
-### 出力メッセージ例
 ```
 AWS Billing Notification (03/01～03/27) : 4.42 USD (+0.40 USD)
 Service Billing Details:
@@ -36,34 +32,38 @@ Account Billing Details:
 ・${Account ID}: 4.42 USD (+0.40 USD)
 ```
 
-## Python 環境での確認実行方法
+## ローカル実行
+
 ### 前提条件
-- aws profileが設定されていること
-- poetry がインストールされていること
-- 実行時のプロファイルの通し方一例
-  - 実行時に通っているプロファイルが使用されるため、プロファイルを export する
-    - `export AWS_PROFILE=${PROFILE_NAME}`
+
+- Python 3.9+
+- Poetry がインストールされていること
+- AWS プロファイルが設定されていること
 
 ### 実行手順
-1. インストールコマンドを実行
+
+1. 依存関係をインストール
     ```
     make install
     ```
-2. コスト取得コマンドを実行
+2. AWS プロファイルを設定
     ```
-    make get-aws-cost
+    export AWS_PROFILE=${PROFILE_NAME}
     ```
-3. ターミナルにコストが表示されることを確認
+3. コスト取得を実行
+    ```
+    make run
+    ```
 
+## template.yaml の更新
 
-## template.yaml の更新方法
-- main.py の内容を変更した場合、`template.yaml` の該当箇所を更新する場合は、以下のコマンドを実行してください。
+`main.py` の内容を変更した場合、以下のコマンドで `template.yaml` に反映してください。
+
 ```
 make update-template
 ```
 
+## デプロイ
 
-## その他
-- AWS Lambda にデプロイした場合、Lambdaに追加でポリシーのアタッチが必要です。
-  - `organizations:ListAccounts` のポリシーをアタッチしてください。
-    - アカウント名を取得するために使用しています。
+1. AWS コンソールから CloudFormation で `template.yaml` をアップロードしてスタックを作成
+2. Lambda に `organizations:ListAccounts` ポリシーを追加でアタッチ（アカウント名の取得に必要）

@@ -17,6 +17,10 @@ lint: ## Run linter
 format: ## Run formatter
 	poetry run black .
 
+.PHONY: format-check
+format-check: ## Check formatting without modifying files
+	poetry run black --check .
+
 .PHONY: update-template
 update-template: ## Update the lambda function code in template.yaml with main.py content
 	@echo "template.yaml 内の Lambda 関数コードを更新中..."
