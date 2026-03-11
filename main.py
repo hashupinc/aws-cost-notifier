@@ -35,9 +35,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
         process_billing_data(current_billing_data)
     )
 
+    # クレジット情報の取得
+    credit_info = None
+    if os.environ.get("SHOW_CREDIT_DETAILS") == "true":
+        start_date, end_date = get_cost_date_range()
+        gross_resp, credit_resp = get_credit_data(start_date, end_date)
+        credit_info = process_credit_data(gross_resp, credit_resp)
+
     # 投稿用のメッセージを作成する
-    (title, detail) = create_message(
-        total_billing_info, service_billings, account_billings, tax_billing
+    title, detail = create_message(
+        total_billing_info, service_billings, account_billings, tax_billing, credit_info
     )
 
     try:
@@ -113,19 +120,112 @@ def get_billing_data() -> dict:
     """
     start_date, end_date = get_cost_date_range()
 
-    response = ce.get_cost_and_usage(
-        TimePeriod={
+    params = {
+        "TimePeriod": {
             "Start": start_date,
             "End": end_date,
         },
-        Granularity="DAILY",
-        Metrics=["UnblendedCost"],
-        GroupBy=[
+        "Granularity": "DAILY",
+        "Metrics": ["UnblendedCost"],
+        "GroupBy": [
             {"Type": "DIMENSION", "Key": "SERVICE"},
             {"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"},
         ],
-    )
+    }
+
+    # クレジット詳細表示が有効な場合、Credit レコードを除外して実コストを表示
+    if os.environ.get("SHOW_CREDIT_DETAILS") == "true":
+        params["Filter"] = {
+            "Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Credit"]}}
+        }
+
+    response = ce.get_cost_and_usage(**params)
     return response
+
+
+def get_credit_data(start_date: str, end_date: str) -> Tuple[dict, dict]:
+    """クレジット適用前のコスト（Gross cost）とクレジット額を取得する。
+
+    Cost Explorer API を2回呼び出し、Credit レコードを除外した総コストと
+    Credit レコードのみのコストを取得する。
+
+    Args:
+        start_date (str): ISO形式の開始日。
+        end_date (str): ISO形式の終了日。
+
+    Returns:
+        Tuple[dict, dict]: Gross cost レスポンスと Credit レスポンスのタプル。
+    """
+    gross_resp = ce.get_cost_and_usage(
+        TimePeriod={"Start": start_date, "End": end_date},
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        Filter={"Not": {"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Credit"]}}},
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+    )
+
+    credit_resp = ce.get_cost_and_usage(
+        TimePeriod={"Start": start_date, "End": end_date},
+        Granularity="MONTHLY",
+        Metrics=["UnblendedCost"],
+        Filter={"Dimensions": {"Key": "RECORD_TYPE", "Values": ["Credit"]}},
+        GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+    )
+
+    return gross_resp, credit_resp
+
+
+def process_credit_data(gross_resp: dict, credit_resp: dict) -> Optional[dict]:
+    """クレジットデータを処理し、クレジット情報を返す。
+
+    Gross cost と Credit のレスポンスを受け取り、クレジットがある場合は
+    サービス別の内訳を含むクレジット情報を返す。クレジットがない場合は None を返す。
+
+    Args:
+        gross_resp (dict): Gross cost の Cost Explorer レスポンス。
+        credit_resp (dict): Credit の Cost Explorer レスポンス。
+
+    Returns:
+        Optional[dict]: クレジット情報。クレジットがない場合は None。
+    """
+    # Gross cost の合計を算出
+    gross_cost = 0.0
+    for time_period in gross_resp.get("ResultsByTime", []):
+        for group in time_period.get("Groups", []):
+            gross_cost += float(group["Metrics"]["UnblendedCost"]["Amount"])
+
+    # Credit の合計とサービス別内訳を算出
+    total_credits = 0.0
+    credit_by_service = {}
+    for time_period in credit_resp.get("ResultsByTime", []):
+        for group in time_period.get("Groups", []):
+            service_name = group["Keys"][0]
+            amount = float(group["Metrics"]["UnblendedCost"]["Amount"])
+            total_credits += amount
+            if service_name in credit_by_service:
+                credit_by_service[service_name] += amount
+            else:
+                credit_by_service[service_name] = amount
+
+    # クレジットがない場合は None を返す
+    if total_credits == 0.0:
+        return None
+
+    # サービス別内訳を amount の絶対値の降順でソート
+    sorted_services = sorted(
+        [
+            {"service_name": name, "amount": amount}
+            for name, amount in credit_by_service.items()
+        ],
+        key=lambda x: abs(x["amount"]),
+        reverse=True,
+    )
+
+    return {
+        "gross_cost": gross_cost,
+        "total_credits": total_credits,
+        "credit_by_service": sorted_services,
+    }
 
 
 def process_billing_data(current_data):
@@ -245,8 +345,15 @@ def main():
         process_billing_data(current_billing_data)
     )
 
+    # クレジット情報の取得
+    credit_info = None
+    if os.environ.get("SHOW_CREDIT_DETAILS") == "true":
+        start_date, end_date = get_cost_date_range()
+        gross_resp, credit_resp = get_credit_data(start_date, end_date)
+        credit_info = process_credit_data(gross_resp, credit_resp)
+
     title, details = create_message(
-        total_billing_info, service_billings, account_billings, tax_billing
+        total_billing_info, service_billings, account_billings, tax_billing, credit_info
     )
     print(title)
     print(details)
@@ -257,6 +364,7 @@ def create_message(
     service_billings: list,
     account_billings: list,
     tax_billing: float,
+    credit_info: Optional[dict] = None,
 ) -> Tuple[str, str]:
     """請求情報に基づいてメッセージのタイトルと詳細を作成する。
 
@@ -287,6 +395,20 @@ def create_message(
 
     details = []
 
+    # クレジット情報
+    if credit_info is not None:
+        details.append("Credit Usage:")
+        details.append(
+            f"- Gross Cost (before credits): {credit_info['gross_cost']:.02f} USD"
+        )
+        details.append(f"- Credits Applied: {credit_info['total_credits']:.02f} USD")
+        for item in credit_info["credit_by_service"]:
+            # クレジット額は負数なので絶対値で表示
+            details.append(
+                f"  - {item['service_name']}: {abs(item['amount']):.02f} USD"
+            )
+        details.append("")
+
     # サービス毎の請求額
     details.append("Service Billing Details:")
     for item in service_billings:
@@ -298,7 +420,7 @@ def create_message(
             # 請求無し（0.0 USD）の場合は、内訳を表示しない
             continue
         details.append(
-            f"・{service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
+            f"- {service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
         )
 
     # 全サービスの請求無し（0.0 USD）の場合は以下メッセージを追加
@@ -322,11 +444,11 @@ def create_message(
             continue
         if account_name is None:
             details.append(
-                f"・{account_id}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
+                f"- {account_id}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
             )
         else:
             details.append(
-                f"・{account_name} ({account_id}): {billing:.02f} USD ({prev_billing:+.02f} USD)"
+                f"- {account_name} ({account_id}): {billing:.02f} USD ({prev_billing:+.02f} USD)"
             )
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
