@@ -103,20 +103,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> None:
 def get_billing_data() -> dict:
     """AWSのCost Explorerから請求情報を取得する。
 
-    この関数は、指定された期間のAWS請求データを取得します。
-    デフォルトでは当月全体のデータを取得しますが、`single_date`フラグが
-    Trueの場合は、直近1日のデータを取得します。
-
-    Args:
-        single_date (bool): Trueに設定した場合、前日の請求データを取得する。
-                            デフォルトはFalse。
+    この関数は、当月の請求データを日次で取得します。
+    SHOW_CREDIT_DETAILS が有効な場合、Credit レコードを除外して実コストを返します。
 
     Returns:
         dict: 請求期間、グループ化されたサービス、およびリンクアカウントごとの
               請求情報を含む辞書。
-
-    Raises:
-        boto3のクライアントメソッドの呼び出しに失敗した場合、その例外が伝播します。
     """
     start_date, end_date = get_cost_date_range()
 
@@ -389,8 +381,6 @@ def create_message(
     total = total_billing["billing"]
     prev_total = total_billing["prev_billing"]
 
-    account_id = os.environ.get("ACCOUNT_ID")
-
     title = f"AWS Billing Notification ({start}～{end_yesterday}) : {total:.02f} USD ({prev_total:+.02f} USD)"
 
     details = []
@@ -411,6 +401,7 @@ def create_message(
 
     # サービス毎の請求額
     details.append("Service Billing Details:")
+    has_service_billing = False
     for item in service_billings:
         service_name = item["service_name"]
         billing = item["billing"]
@@ -422,9 +413,10 @@ def create_message(
         details.append(
             f"- {service_name}: {billing:.02f} USD ({prev_billing:+.02f} USD)"
         )
+        has_service_billing = True
 
-    # 全サービスの請求無し（0.0 USD）の場合は以下メッセージを追加
-    if not details:
+    # サービスの請求が1件もない場合はメッセージを追加
+    if not has_service_billing:
         details.append("No charge this period at present.")
 
     # アカウントIDと名前のマッピングを取得
@@ -452,7 +444,7 @@ def create_message(
             )
 
     # 全アカウントの請求無し（0.0 USD）の場合は以下メッセージを追加
-    if not any(item["billing"] != "0.0" for item in account_billings):
+    if not any(item["billing"] != 0.0 for item in account_billings):
         details.append("No account charge this period at present.")
 
     # Taxの請求額
@@ -538,12 +530,10 @@ def create_aggregated_account_billings(account_billings: list) -> list:
 def get_cost_date_range() -> Tuple[str, str]:
     """請求期間を取得する
 
-    この関数は、当月の開始日から今日までの請求期間を計算します。
-    ただし、月初の場合は先月の1日から当月の1日までの期間を取得します。
+    この関数は、当月の開始日から前日までの請求期間を計算します。
+    ただし、今日が2日の場合（start_date と end_date が同一になる場合）は、
+    前月の1日から前月末日までの期間を取得します。
     これは、Cost Explorer APIの制約により、開始日と終了日に同じ日付を指定できないためです。
-
-    Args:
-        only_until_yesterday (bool): True に設定した場合、終了日を前日に設定します。
 
     Returns:
         Tuple[str, str]: ISO形式の開始日と終了日を含むタプル。
@@ -596,7 +586,7 @@ def get_secret(secret_name: Optional[str], secret_key: str) -> Any:
     # ヘッダーにAWSセッショントークンを設定
     aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
     if aws_session_token is None:
-        raise ValueError("aws sessuib token must not be None")
+        raise ValueError("AWS session token must not be None")
     headers = {"X-Aws-Parameters-Secrets-Token": aws_session_token}
 
     # Secrets Manager へのアクセスを高速化するために拡張機能が提供するキャッシュを活用

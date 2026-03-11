@@ -3,23 +3,23 @@ DEFAULT_GOAL := help
 
 .PHONY: install
 install: ## Install dependencies
-	poetry install
+	uv sync
 
 .PHONY: run
 run: ## Run the AWS cost notifier script
-	poetry run python main.py
+	uv run python main.py
 
 .PHONY: lint
 lint: ## Run linter
-	poetry run flake8 .
+	uv run flake8 .
 
 .PHONY: format
 format: ## Run formatter
-	poetry run black .
+	uv run black .
 
 .PHONY: format-check
 format-check: ## Check formatting without modifying files
-	poetry run black --check .
+	uv run black --check .
 
 .PHONY: update-template
 update-template: ## Update the lambda function code in template.yaml with main.py content

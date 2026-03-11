@@ -5,12 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 AWS Lambda アプリケーション。AWS Cost Explorer から請求データを取得し、Email(SNS)・Slack・LINE に通知する。
-Python 3.9+ / Poetry / CloudFormation (SAM-style) で構成。
+Python 3.9+ / uv / CloudFormation (SAM-style) で構成。
 
 ## Commands
 
 ```bash
-make install          # Poetry で依存関係インストール
+make install          # uv で依存関係インストール
 make lint             # flake8 による静的解析
 make format           # black によるコード整形
 make run              # main.py をローカル実行（AWS認証が必要）
