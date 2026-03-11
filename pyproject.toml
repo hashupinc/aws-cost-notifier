@@ -2,7 +2,7 @@
 name = "aws-cost-notifier"
 version = "0.1.0"
 description = ""
-authors = ["zingerbread <tanahashi@hashup.co.jp>"]
+authors = ["zingerbread <tanahashi@hashup.co.jp>", "Ryosuke Onose <onose@hashup.co.jp>"]
 readme = "README.md"
 package-mode = false
 
